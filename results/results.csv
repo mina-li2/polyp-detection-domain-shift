@@ -1,0 +1,7 @@
+experiment,dataset,precision,recall (sensitivity),mAP50,mAP50-95
+baseline,Kvasir (same hospital),0.89,0.912,0.949,0.771
+baseline,CVC-ClinicDB (new hospital),0.86,0.852,0.903,0.611
+strongaug,Kvasir (same hospital),0.868,0.873,0.927,0.709
+strongaug,CVC-ClinicDB (new hospital),0.856,0.827,0.885,0.441
+finetune,Kvasir (same hospital),0.869,0.922,0.922,0.756
+finetune,CVC-ClinicDB (new hospital),0.908,0.81,0.907,0.635
