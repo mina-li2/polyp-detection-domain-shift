@@ -1,97 +1,34 @@
-# Polyp Detection in Colonoscopy: Does It Survive a New Hospital?
+# Polyp Detection Across Hospitals
 
-Real-time detection of colorectal polyps (growths that can become cancer) with YOLO,
-trained on images from one hospital and tested on a hospital it has never seen.
+Colorectal polyp detection with YOLO11, trained on colonoscopy images from one hospital and tested on a hospital the model never saw during training.
 
-**The question this project asks:** A model can score well on its own test set and
-still fail at a new hospital, where the camera, lighting and patients are different.
-How big is that drop for polyp detection, and what does it take to fix it?
+Colorectal cancer usually starts as a polyp, and polyps missed during colonoscopy are a known problem. Detection models often report high accuracy on their own test sets, but images from a different hospital (different scopes, lighting and patients) can look different enough to hurt performance. This project measures how large that drop is, tests two common fixes, and picks a confidence threshold based on what matters clinically: not missing polyps.
 
----
+## Data
 
-## How to reproduce
+| Dataset | Role | Images | Source |
+|---|---|---|---|
+| Kvasir-SEG | Training hospital (Norway) | 1,000 | https://datasets.simula.no/kvasir-seg/ |
+| CVC-ClinicDB | Unseen hospital (Barcelona) | 612 frames from 29 videos | https://polyp.grand-challenge.org/CVCClinicDB/ |
 
-### Step 0: What you need
-- A Google account (for Google Colab, which gives you a free GPU)
-- This folder, zipped as `polyp-detection.zip`
-- About a weekend of compute time, spread over a few sessions
+Both datasets come with pixel-level polyp masks. I converted each mask to bounding boxes, one box per separate polyp region, ignoring specks smaller than 0.1% of the image.
 
-You don't need a GPU of your own. Everything runs in Colab.
+- **Kvasir:** random 80/10/10 train/val/test split.
+- **CVC-ClinicDB:** split by frame order, not at random. The first 122 frames are used only for the fine-tuning experiment, and the remaining 490 frames (512 polyps) are the held-out test set. CVC frames come from videos, so neighbouring frames are near-duplicates. A random split would put near-copies of test frames into training and inflate the scores.
 
-### Step 1: Open Colab with a GPU
-1. Go to https://colab.research.google.com and choose **File → Upload notebook** → `polyp_detection_colab.ipynb`
-2. **Runtime → Change runtime type → T4 GPU → Save**
-3. Run the first cell. It should print `Tesla T4`.
+The datasets are not included in this repo because their licences don't allow redistribution.
 
-### Step 2: Upload the project
-Run the "Upload the project" cell and pick `polyp-detection.zip`. It unzips and installs the libraries.
+## Experiments
 
-### Step 3: Get the datasets
-The notebook downloads both datasets for you:
+All models are YOLO11s at 640 px, trained on a Colab T4 GPU.
 
-| Dataset | What it is | Where it comes from |
-|---|---|---|
-| **Kvasir-SEG** | 1,000 polyp images with masks, checked by a gastroenterologist | Vestre Viken hospitals, Norway: https://datasets.simula.no/kvasir-seg/ |
-| **CVC-ClinicDB** | 612 frames from 29 colonoscopy videos, with masks | Hospital Clinic, Barcelona: https://polyp.grand-challenge.org/CVCClinicDB/ |
+1. **Baseline:** trained on Kvasir only (50 epochs).
+2. **Strong augmentation:** Kvasir only, with heavy colour, brightness, rotation and flip augmentation, to test whether the model can be made robust to a new hospital's camera without any new data (50 epochs).
+3. **Fine-tuning:** the baseline model trained further on Kvasir plus the 122 CVC fine-tuning frames (30 epochs).
 
-**If a download fails:**
-- **Kvasir:** open https://datasets.simula.no/kvasir-seg/ in your browser, download `kvasir-seg.zip`, upload it into the `raw/` folder in Colab, and rerun the cell.
-- **CVC-ClinicDB:** download it from Kaggle (search "cvcclinicdb", the `balraj98` upload), unzip it into `raw/cvc/`, then point `--cvc` at the folder that contains `Original` and `Ground Truth`.
-
-Both datasets are for research and education only, and you **must cite them** (citations below).
-
-### Step 4: Convert the masks to boxes
-```
-python prepare_data.py --kvasir raw/Kvasir-SEG --cvc raw/cvc/CVC-ClinicDB
-```
-Both datasets label polyps as masks (exactly which pixels are polyp). YOLO needs boxes,
-so the script draws the tightest box around each separate polyp, and skips tiny specks
-of mask noise.
-
-How the data is split:
-- **Kvasir:** 80% train / 10% val / 10% test (random)
-- **CVC:** first 20% of frames for fine-tuning, the remaining 80% held out as the "new hospital" test.
-  The split is by frame order, not random. CVC frames come from videos, so neighbouring frames
-  are near-duplicates. A random split would leak test frames into training and inflate the
-  score. Data leakage like this is a common way medical AI results get overstated.
-
-### Step 5: Train the three experiments
-```
-python train.py --exp baseline     # standard training on Kvasir only
-python train.py --exp strongaug    # Kvasir only, heavy colour/lighting/rotation augmentation
-python train.py --exp finetune     # baseline + a small slice of CVC mixed in
-```
-Each one takes roughly 20–40 min on a free T4. **Colab disconnects after a while**, so
-run the Drive backup cell after each experiment.
-
-### Step 6: Evaluate
-```
-python evaluate.py
-```
-This tests every model on **Kvasir test** (same hospital) and **CVC test** (new hospital), and saves to `results/`:
-- `results.csv`: precision, recall (= sensitivity), mAP50, mAP50-95
-- `domain_shift.png`: the headline chart
-- `cvc_examples_*.jpg`: green = doctor's box, red = model's box
-
-### Step 7: Real-time demo
-```
-python demo.py --weights runs/finetune/weights/best.pt --source data/yolo/cvc/images/test
-```
-This makes `results/demo.mp4` with boxes and an FPS counter. Colonoscopy video runs at about
-25–30 FPS, so if the model is faster than that, it can run live during the procedure.
-
-### Step 8: Put it on GitHub
-Push the code, this README, and the `results/` folder (charts, example grids, CSVs, demo video).
-Keep the datasets and `runs/` out of the repo, since the dataset licences don't allow
-redistributing them.
-
----
+Each model takes 8–13 minutes to train. Inference runs at about 5.5 ms per frame, well above colonoscopy video rates.
 
 ## Results
-
-All models are YOLO11s trained on a free Colab T4 GPU (baseline and strong augmentation: 50 epochs;
-fine-tuning: 30 epochs). Each takes 8–13 minutes to train, and inference is about 5.5 ms per frame,
-which is well above real-time colonoscopy video rates.
 
 ![Same hospital vs new hospital](results/domain_shift.png)
 
@@ -101,26 +38,15 @@ which is well above real-time colonoscopy video rates.
 | Strong augmentation | 0.927 | 0.885 | 0.709 | 0.441 | 0.856 | 0.827 |
 | Fine-tuned (+122 CVC frames) | 0.922 | 0.907 | 0.756 | 0.635 | **0.908** | 0.810 |
 
-Kvasir = same hospital (100 test images). CVC-ClinicDB = new hospital, never seen in training (490 test frames, 512 polyps).
+**At the new hospital, the model still finds most polyps, but its boxes get much less accurate.** mAP50 dropped by about 0.05, while mAP50-95, which rewards tight boxes, dropped by 0.16. Recall fell from 0.91 to 0.85.
 
-### What I found
+**Augmentation alone did not help.** It lowered every metric, and box accuracy at the new hospital fell to 0.44. The augmentation was likely too aggressive for 50 epochs.
 
-**1. At the new hospital, the model still finds most polyps, but its boxes get much worse.**
-mAP50 dropped by about 0.05, while mAP50-95, which rewards tight boxes, dropped by 0.16. Recall fell
-from 0.91 to 0.85.
+**Fine-tuning reduced false alarms but missed more polyps.** Precision rose from 0.86 to 0.91, and recall fell from 0.85 to 0.81. For screening, that is the wrong trade-off. A false alarm costs the doctor a second look, while a missed polyp can develop into cancer.
 
-**2. Augmentation alone did not help.** Heavy colour, lighting and rotation augmentation lowered
-every metric, and box accuracy at the new hospital collapsed to 0.44. These augmentation settings were
-probably too aggressive for 50 epochs.
+## Choosing a screening threshold
 
-**3. Fine-tuning made the model cleaner but less safe.** With 122 new-hospital frames, precision went
-up (0.86 → 0.91), but recall went down (0.85 → 0.81). For cancer screening that is the wrong trade-off.
-A false alarm costs the doctor a second look. A missed polyp can become cancer.
-
-### Choosing a threshold for screening
-
-Because a missed polyp matters more than a false alarm, I tested every confidence threshold on the
-new-hospital set (`threshold_sweep.py`):
+Since sensitivity matters more than precision here, I swept the confidence threshold on the 490 unseen CVC frames.
 
 ![Recall vs false alarms](results/recall_vs_false_alarms.png)
 
@@ -130,48 +56,67 @@ new-hospital set (`threshold_sweep.py`):
 | **0.10 (chosen)** | **0.902** | **50** | **0.30** |
 | 0.05 | 0.918 | 42 | 0.42 |
 
-- Going from 0.25 to 0.10 catches **21 more polyps**, at the cost of about one extra false alarm every 8 frames.
-- Going from 0.10 to 0.05 catches only 8 more, and adds 40% more false alarms. That's where the trade
-  stops being worth it.
-- **No model reached 95% recall at any threshold.** About 8% of polyps were never matched by any box.
-  A lower threshold can't fix that. It needs a better model, or more varied training data.
-- Per frame, 0.30 false alarms still means several false boxes per second at video speed. A real system
-  would need smoothing across frames, for example only showing a box once it appears in several frames in a row.
+Lowering the threshold from 0.25 to 0.10 catches 21 more polyps for about one extra false alarm every 8 frames. Going down to 0.05 catches only 8 more but adds 40% more false alarms, so I chose 0.10.
 
-### Where it fails (see `results/cvc_examples_*.jpg`)
-- **Stool and debris:** bright yellow residue is flagged as a polyp.
-- **Fluid and glare:** a large box over a pool of liquid, with the real polyp only partly covered.
-- **Oversized boxes** at the new hospital, which explains the mAP50-95 drop.
-- Clear, rounded, well-lit polyps are found with high confidence (0.8–0.9).
+No model reached 95% recall at any threshold. About 8% of polyps were never matched by any box, which a lower threshold cannot fix. The baseline had the highest recall of the three models at every threshold tested.
 
-### Takeaway
-A detector that scores 0.95 at its own hospital still misses polyps elsewhere. A lower threshold buys
-back some of them, and the simple fixes (augmentation, a little fine-tuning) didn't help the number that
-matters most clinically. A good benchmark score isn't the same as being safe for patients.
+## Failure cases
 
-## Next steps
-- **Per-polyp detection:** CVC frames come from 29 video sequences. A polyp counts as caught if any of its frames is detected, which is closer to what matters in a real procedure.
-- **How much new-hospital data is needed:** fine-tune with 5–100% of the CVC slice and plot the curve.
-- **Pick models by recall** instead of overall mAP when fine-tuning.
-- Swap to segmentation (`yolo11s-seg.pt`) since you already have masks
-- Test on a third dataset (ETIS-Larib or CVC-ColonDB) to see if the pattern holds
+Example frames are in `results/cvc_examples_*.jpg` (green = ground truth, red = prediction).
 
-## Limitations (be upfront about these)
-- Still images, not full procedure videos
-- Small datasets: about 1,600 images across two centres
-- Not clinically validated, so this is a research prototype only
+- Yellow stool or debris detected as a polyp
+- A large box over fluid and glare, only partly covering the real polyp
+- Oversized boxes at the new hospital, consistent with the mAP50-95 drop
+- Clear, rounded, well-lit polyps are detected with high confidence (0.8–0.9)
 
-## Citations
-- Jha D. et al. *Kvasir-SEG: A Segmented Polyp Dataset.* MultiMedia Modeling (MMM), 2020.
-- Bernal J. et al. *WM-DOVA maps for accurate polyp highlighting in colonoscopy: Validation vs. saliency maps from physicians.* Computerized Medical Imaging and Graphics 43, 99–111, 2015.
-- Ultralytics YOLO: https://github.com/ultralytics/ultralytics
+## Conclusion
+
+A detector scoring 0.95 at its own hospital missed noticeably more polyps at a new one. Lowering the threshold recovered some of them, but neither augmentation nor a small amount of fine-tuning improved recall, which is the number that matters most for screening.
+
+## Limitations
+
+- Results are per frame, and 0.30 false alarms per frame still means several false boxes per second in live video. A deployed system would need smoothing across frames.
+- Two datasets with about 1,600 images in total.
+- Test sets are small, so differences of 1–2 points may not be meaningful.
+- Not clinically validated.
+
+## Future work
+
+- **Per-polyp detection:** count a polyp as found if it is detected in any frame of its video sequence, which is closer to what matters in a real procedure.
+- **Data efficiency:** fine-tune with different amounts of new-hospital data to see how much is needed to recover.
+- Select fine-tuned models by recall instead of overall mAP.
+- Test on more centres (ETIS-Larib, CVC-ColonDB, PolypGen).
+
+## Reproducing
+
+The easiest way is to open `polyp_detection_colab.ipynb` in Google Colab with a T4 GPU. To run the scripts directly:
+
+```
+pip install -r requirements.txt
+python prepare_data.py --kvasir raw/Kvasir-SEG --cvc raw/CVC-ClinicDB
+python train.py --exp baseline --epochs 50
+python train.py --exp strongaug --epochs 50
+python train.py --exp finetune
+python evaluate.py
+python threshold_sweep.py
+python demo.py --weights runs/baseline/weights/best.pt --source data/yolo/cvc/images/test
+```
+
+Kvasir-SEG (`kvasir-seg.zip`) has to be downloaded from the dataset page and unzipped into `raw/`. CVC-ClinicDB can be downloaded from the Hugging Face mirror `berkaytrhn/cvc-clinicdb`, as in the notebook.
 
 ## Files
-| File | What it does |
+
+| File | Purpose |
 |---|---|
-| `polyp_detection_colab.ipynb` | Runs the whole pipeline in Colab, top to bottom |
-| `prepare_data.py` | Masks → YOLO boxes, leakage-safe splits, dataset configs |
+| `polyp_detection_colab.ipynb` | Full pipeline in Colab |
+| `prepare_data.py` | Mask-to-box conversion, leakage-safe splits, dataset configs |
 | `train.py` | The three experiments |
 | `evaluate.py` | Same-hospital vs new-hospital metrics, chart, example images |
 | `threshold_sweep.py` | Recall vs false alarms at every confidence threshold |
 | `demo.py` | Annotated video with FPS counter |
+
+## Citations
+
+- Jha D. et al. *Kvasir-SEG: A Segmented Polyp Dataset.* MultiMedia Modeling (MMM), 2020.
+- Bernal J. et al. *WM-DOVA maps for accurate polyp highlighting in colonoscopy: Validation vs. saliency maps from physicians.* Computerized Medical Imaging and Graphics 43, 99–111, 2015.
+- Ultralytics YOLO: https://github.com/ultralytics/ultralytics
